@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: "Source Sans Pro", system-ui, sans-serif; margin: 0; padding: 4px 2px; color: #31333f; }
+  button { font: inherit; padding: 6px 14px; margin: 0 8px 8px 0; border-radius: 8px; border: 1px solid #c8c9cf; background: #fff; cursor: pointer; }
+  button.primary { background: #ff4b4b; color: #fff; border-color: #ff4b4b; }
+  button[hidden] { display: none; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { font-size: 14px; }
+  .bad { color: #b42318; } .good { color: #067647; }
+</style>
+</head>
+<body>
+<button id="nlm-ask-button" class="primary" type="button" hidden disabled>Ask NotebookLM</button>
+<button id="nlm-diagnose-button" type="button" hidden disabled>Check NotebookLM tab</button>
+<button id="nlm-upload-button" class="primary" type="button" hidden disabled>Upload the fictional PDFs</button>
+<button id="nlm-create-button" class="primary" type="button" hidden disabled>Create notebook</button>
+<button id="nlm-delete-button" type="button" hidden disabled>Delete this experiment notebook</button>
+<button id="nlm-combined-button" class="primary" type="button" hidden disabled>Run combined test</button>
+<div id="status">Looking for the extension…</div>
+<!-- The request's details, read by the extension only when one of the buttons above is really clicked. -->
+<script type="application/json" id="nlm-payload">{}</script>
+<script>
+'use strict';
+// Speaks the Streamlit custom-component protocol (version 1) directly, so no build step or npm package is needed.
+const ACTION_BUTTONS = { ask: 'nlm-ask-button', diagnose: 'nlm-diagnose-button', upload: 'nlm-upload-button',
+                         create: 'nlm-create-button', delete: 'nlm-delete-button', combined: 'nlm-combined-button' };
+const buttons = Object.values(ACTION_BUTTONS).map(id => document.getElementById(id));
+const status = document.getElementById('status');
+const payloadEl = document.getElementById('nlm-payload');
+let args = null, extensionPresent = false, pending = null;
+
+function toStreamlit(type, data) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, data), '*'); }
+function setStatus(text, cls) { status.textContent = text; status.className = cls || ''; toStreamlit('streamlit:setFrameHeight', { height: document.body.scrollHeight + 8 }); }
+function refresh() {
+  const shown = new Set(((args && args.actions) || ['ask', 'diagnose']).map(a => ACTION_BUTTONS[a]));
+  const ready = extensionPresent && args && !pending;
+  for (const b of buttons) {
+    b.hidden = !shown.has(b.id);
+    b.disabled = !ready || (b.id === 'nlm-delete-button' && !(args && args.delete_id));
+  }
+  if (args) payloadEl.textContent = JSON.stringify(args);
+}
+
+window.addEventListener('message', event => {
+  const d = event.data || {};
+  if (event.source === window.parent && d.type === 'streamlit:render') {
+    args = d.args; refresh();
+    if (extensionPresent && !pending) setStatus('Ready.', 'good');
+    return;
+  }
+  // Messages from the extension's bridge arrive on this frame's own window and origin.
+  if (event.source !== window || event.origin !== location.origin || d.source !== 'nlm-bridge') return;
+  if (d.type === 'present') {
+    extensionPresent = true; refresh();
+    if (!pending) setStatus('Extension found (version ' + d.version + '). Ready.', 'good');
+  } else if (d.type === 'started' && args && d.requestId === args.request_id) {
+    pending = d.requestId; refresh();
+    setStatus('Working… this can take a few minutes. Keep this page open.');
+  } else if (d.type === 'progress' && d.requestId === pending) {
+    setStatus(String(d.step || 'Working…'));
+  } else if (d.type === 'result' && d.requestId === pending) {
+    pending = null; refresh();
+    const r = d.result || {};
+    setStatus(r.ok ? 'Done.' : 'Failed: ' + (r.message || r.code || 'unknown error'), r.ok ? 'good' : 'bad');
+    toStreamlit('streamlit:setComponentValue', { value: Object.assign({}, r, { request_id: d.requestId }), dataType: 'json' });
+  }
+});
+
+toStreamlit('streamlit:componentReady', { apiVersion: 1 });
+setStatus('Looking for the extension…');
+window.postMessage({ source: 'nlm-page', type: 'ping' }, location.origin);
+setTimeout(() => {
+  if (!extensionPresent) setStatus('Extension not detected. Install it in this Chrome profile, then reload this page.', 'bad');
+}, 1500);
+</script>
+</body>
+</html>

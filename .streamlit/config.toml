@@ -1,0 +1,7 @@
+# Public NotebookLM feasibility test. No server.address here: Streamlit Community Cloud sets its own.
+# Local runs must use run_locally_windows.bat (or --server.address localhost) so they listen on this computer only.
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "viewer"
